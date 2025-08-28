@@ -1,0 +1,226 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  subdomain String   @unique
+  createdAt DateTime @default(now())
+
+  users         User[]
+  locations     Location[]
+  subscriptions Subscription[]
+
+  services     Service[]
+  staff        Staff[]
+  customers    Customer[]
+  appointments Appointment[]
+  workingHours WorkingHours[]
+  timeOffs     TimeOff[]
+}
+
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  passwordHash   String
+  role           Role         @default(USER)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  STAFF
+  USER
+}
+
+model PlanCatalog {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  currency  String // "ARS" | "USD"
+  features  Json
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  // back-relation que faltaba:
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  planId         String
+  plan           PlanCatalog  @relation(fields: [planId], references: [id])
+  provider       String // "MP" | "STRIPE"
+  providerRef    String // preapproval_id / subscriptionId
+  status         String // authorized/paused/cancelled/...
+  trialEndsAt    DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([planId])
+}
+
+model Location {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  timezone       String
+  services       Service[]
+  staff          Staff[]
+
+  appointments Appointment[]
+  workingHours WorkingHours[]
+  timeOffs     TimeOff[]
+
+  @@index([organizationId])
+}
+
+model Service {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  locationId     String
+  location       Location      @relation(fields: [locationId], references: [id])
+  name           String
+  durationMin    Int
+  bufferMin      Int           @default(0)
+  price          Decimal       @db.Decimal(10, 2)
+  appointments   Appointment[]
+
+  @@index([organizationId])
+  @@index([locationId])
+}
+
+model Staff {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  locationId     String
+  location       Location      @relation(fields: [locationId], references: [id])
+  name           String
+  appointments   Appointment[]
+
+  workingHours WorkingHours[]
+  timeOffs     TimeOff[]
+
+  @@index([organizationId])
+  @@index([locationId])
+}
+
+model Customer {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  email          String?
+  phone          String?
+  name           String
+  createdAt      DateTime      @default(now())
+  appointments   Appointment[]
+
+  @@index([organizationId])
+}
+
+model Appointment {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id])
+
+  staffId String
+  staff   Staff  @relation(fields: [staffId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  startsAt  DateTime
+  endsAt    DateTime
+  status    String   @default("CONFIRMED")
+  createdAt DateTime @default(now())
+
+  @@unique([staffId, startsAt, endsAt])
+  @@index([organizationId])
+  @@index([locationId])
+  @@index([serviceId])
+  @@index([staffId])
+  @@index([customerId])
+}
+
+model ErrorLog {
+  id             String   @id @default(uuid())
+  level          String // error | warn | info
+  message        String
+  stack          String?
+  route          String?
+  method         String?
+  statusCode     Int?
+  userId         String?
+  organizationId String?
+  context        Json?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level])
+  @@index([statusCode])
+}
+
+model WorkingHours {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  locationId     String
+  location       Location     @relation(fields: [locationId], references: [id])
+
+  staffId String?
+  staff   Staff?  @relation(fields: [staffId], references: [id])
+
+  weekday   Int // 0=Sun .. 6=Sat
+  startMin  Int // minutos desde 00:00 (ej 9*60=540)
+  endMin    Int // ej 18*60=1080
+  createdAt DateTime @default(now())
+
+  @@unique([locationId, staffId, weekday])
+  @@index([organizationId])
+  @@index([locationId])
+  @@index([staffId])
+}
+
+model TimeOff {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  locationId     String
+  location       Location     @relation(fields: [locationId], references: [id])
+
+  staffId String?
+  staff   Staff?  @relation(fields: [staffId], references: [id])
+
+  startsAt  DateTime
+  endsAt    DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([locationId])
+  @@index([staffId])
+  @@index([startsAt, endsAt])
+}
