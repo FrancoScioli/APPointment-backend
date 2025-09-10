@@ -1,7 +1,23 @@
-node_modules
-# Keep environment variables out of version control
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+.pnpm-debug.log
+
+# Compilados
+dist/
+*.js.map
+
+# Test coverage
+coverage/
+
+# Entornos
 .env
+.env.test
+.env.local
+.env.*.local
 
-/generated/prisma
-
-/node_modules
+# Logs
+logs/
+*.log

@@ -7,6 +7,7 @@ import { Inject as Inj } from '@nestjs/common'
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston'
 import type { Logger } from 'winston'
 import { toZonedTime, fromZonedTime } from 'date-fns-tz'
+import { NotificationsService } from 'src/notifications/notifications.service'
 
 
 @Injectable({ scope: Scope.REQUEST })
@@ -15,6 +16,7 @@ export class AppointmentsService {
     private prisma: PrismaService,
     @Inject(REQUEST) private readonly req: Request,
     @Inj(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
+    private readonly notifications: NotificationsService,
   ) { }
 
   async create(dto: {
@@ -42,11 +44,12 @@ export class AppointmentsService {
   }
 
   /**
- * Reserva un turno (core):
- * - Calcula endsAt según duración del servicio
- * - Valida solapamiento por rango (staffId)
- * - Crea Appointment con status CONFIRMED
- */
+   * Reserva un turno:
+   * - Calcula endsAt segun la duracion del servicio
+   * - Valida solapamiento por staff
+   * - Crea el turno CONFIRMED
+   * - Dispara notificaciones (no bloqueante)
+   */
   async book(params: {
     organizationId: string; locationId: string; serviceId: string;
     staffId: string; customerId: string; startsAt: Date
@@ -56,7 +59,7 @@ export class AppointmentsService {
 
     return this.prisma.withOrg(orgId, async (tx) => {
       const service = await tx.service.findUnique({ where: { id: params.serviceId } })
-      if (!service) throw new BadRequestException('Servicio no existe')
+      if (!service) throw new BadRequestException('Non-existent service')
 
       const endsAt = addMinutes(params.startsAt, service.durationMin)
 
@@ -79,6 +82,11 @@ export class AppointmentsService {
         ctx: 'appointments.book',
         orgId, appointmentId: appt.id, staffId: appt.staffId,
       })
+
+      this.notifications.sendBookingConfirmation(appt.id).catch((e) => {
+        this.logger.warn('Notification failure (non blocking)', { ctx: 'appointments.book', appointmentId: appt.id, err: e?.message })
+      })
+
       return appt
     })
   }
@@ -111,10 +119,10 @@ export class AppointmentsService {
 
       if (typeof data.startsAt === 'string') {
         const appt = await tx.appointment.findUnique({ where: { id } })
-        if (!appt) throw new BadRequestException('Turno inexistente')
+        if (!appt) throw new BadRequestException('Non-existent appointment')
 
         const service = await tx.service.findUnique({ where: { id: appt.serviceId } })
-        if (!service) throw new BadRequestException('Servicio no existe')
+        if (!service) throw new BadRequestException('Non-existent service')
 
         const startsAt = new Date(data.startsAt)
         const endsAt = addMinutes(startsAt, service.durationMin)
@@ -129,13 +137,13 @@ export class AppointmentsService {
           },
         })
         if (overlap) {
-          this.logger.warn('Slot ocupado (update)', {
+          this.logger.warn('Occupied slot (update)', {
             ctx: 'appointments.update',
             orgId, id, staffId: appt.staffId,
             startsAt: startsAt.toISOString(),
             endsAt: endsAt.toISOString(),
           })
-          throw new BadRequestException('Slot ocupado')
+          throw new BadRequestException('Occupied slot')
         }
 
         patch.startsAt = startsAt
@@ -173,12 +181,12 @@ export class AppointmentsService {
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO)) {
       this.logger.warn('Invalid date format', { ctx: 'appointments.slots', dateISO })
-      throw new BadRequestException('Formato de fecha inválido (YYYY-MM-DD)')
+      throw new BadRequestException('Invalid date format (YYYY-MM-DD)')
     }
 
     return this.prisma.withOrg(orgId, async (tx) => {
       const service = await tx.service.findUnique({ where: { id: serviceId } })
-      if (!service) throw new BadRequestException('Servicio no existe')
+      if (!service) throw new BadRequestException('Non-existent service')
 
       const loc = await tx.location.findUnique({ where: { id: locationId } })
       const tz = loc?.timezone || 'UTC'
